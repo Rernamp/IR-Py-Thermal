@@ -88,6 +88,12 @@ def parse_arguments() -> argparse.Namespace:
         help="set the integration time for the lock-in thermometry (in seconds)",
     )
     parser.add_argument(
+        "-n",
+        "--negate",
+        action='store_true',
+        help="negate the signal send to the switch device, (useful for NO switches, or N-FETs)",
+    )
+    parser.add_argument(
         "file", nargs="?", type=str, help="use the emulator with the data in file.npy"
     )
     return parser.parse_args()
@@ -129,6 +135,7 @@ class AppState:
             if args.lockin:
                 self.lockin = True
                 self.draw_temp = False
+                self.negate = False
                 # check if all lock-in thermometry options are provided
                 if not args.port or not args.integration:
                     print(
@@ -136,6 +143,9 @@ class AppState:
                         " --integration options"
                     )
                     sys.exit(1)
+
+                if args.negate:
+                    self.negate = True
 
                 self.fequency = args.lockin
                 self.port = args.port
@@ -162,8 +172,8 @@ class AppState:
             axes = self.axes
             self.ax = axes[0][0]
             self.im = axes[0][0].imshow(self.frame, cmap=CMAP_NAMES[self.cmaps_idx])
-            im_in_phase = axes[0][1].imshow(self.frame, cmap=CMAP_NAMES[self.cmaps_idx])
-            im_quadrature = axes[1][1].imshow(
+            self.im_in_phase = axes[0][1].imshow(self.frame, cmap=CMAP_NAMES[self.cmaps_idx])
+            self.im_quadrature = axes[1][1].imshow(
                 self.frame, cmap=CMAP_NAMES[self.cmaps_idx]
             )
             axes[0][0].set_title("Live")
@@ -178,8 +188,8 @@ class AppState:
                 "right", size="5%", pad=0.05
             )
             plt.colorbar(self.im, cax=cax)
-            self.cbar_in_phase = plt.colorbar(im_in_phase, cax=cax_in_phase)
-            self.cbar_quadrature = plt.colorbar(im_quadrature, cax=cax_quadrature)
+            self.cbar_in_phase = plt.colorbar(self.im_in_phase, cax=cax_in_phase)
+            self.cbar_quadrature = plt.colorbar(self.im_quadrature, cax=cax_quadrature)
 
             axes[1][0].axis("off")
             status_text = """
@@ -200,6 +210,14 @@ class AppState:
                 fontsize=12,
                 color="black",
             )
+            self.status_text = """
+        Frame: -,
+        Time: -/-,
+        Load: -,
+        Frequency: -Hz,
+        Integration Time: -s
+        Serial Port: -
+        """
 
         else:
             self.fig = plt.figure()
@@ -253,7 +271,7 @@ def log_annotations_to_csv(annotation_frame) -> None:
             writer.writerow([datetime.now()] + anns_data)
 
 
-def get_lockin_frame(freq, port, integration):
+def get_lockin_frame(freq, port, integration, invert = False):
     """
     Perform all of the lock-in thermometry operations.
 
@@ -306,10 +324,16 @@ Serial Port: {port}
         if current_time - (last_toggle_time - start_time) >= half_period:
             # Toggle the load state
             if load_on:
-                ser.write(b"0\n")  # Send 0 to turn the load off
+                if invert:
+                    ser.write(b"1\n")  # Send 1 to turn the load on
+                else:
+                    ser.write(b"0\n")  # Send 0 to turn the load off
                 load_on = False
             else:
-                ser.write(b"1\n")  # Send 1 to turn the load on
+                if invert:
+                    ser.write(b"0\n")  # Send 0 to turn the load off
+                else:
+                    ser.write(b"1\n")  # Send 1 to turn the load on
                 load_on = True
 
             # print(f'Load state: {load_on}, Time: {current_time}')  # debugging
@@ -351,7 +375,7 @@ Serial Port: {port}
 def capture_lock_in():
     while app_state.is_capturing:
         in_phase, quad = get_lockin_frame(
-            app_state.fequency, app_state.port, app_state.integration
+            app_state.fequency, app_state.port, app_state.integration, app_state.negate
         )
         if in_phase is not None and quad is not None:
             with app_state.lock:
@@ -427,7 +451,7 @@ def animate_func(_frame: int) -> None:
             app_state.im_quadrature.set_clim(
                 np.min(app_state.quad_frame), np.max(app_state.quad_frame)
             )
-            new_status_text = app_state.status_text
+            new_status_text = getattr(app_state, "status_text", "")
             app_state.status_text_obj.set_text(new_status_text)
             return [
                 app_state.im,
@@ -630,7 +654,7 @@ def onmotion(event):
 
 def main() -> None:
     _keep_me_anim = animation.FuncAnimation(
-        app_state.fig, animate_func, interval=1000 / app_state.fps, blit=True
+        app_state.fig, animate_func, interval=1000 / app_state.fps, blit=True, cache_frame_data=False
     )
     app_state.fig.canvas.mpl_connect("button_press_event", onclick)
     app_state.fig.canvas.mpl_connect("motion_notify_event", onmotion)

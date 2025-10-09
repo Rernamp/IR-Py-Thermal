@@ -323,15 +323,41 @@ class Camera:
         return info, temperatureTable
 
     # read raw data from cam, seperate visible frame from metadata
-    def read(self, raw=False) -> Tuple[bool, np.ndarray]:
-        """Retunrs a raw frame from the camera"""
-        ret, frame_raw = self.cap.read()
+    def read(self, raw=False,  max_retries=5, retry_delay=0.5) -> Tuple[bool, np.ndarray]:
+        """Returns a raw frame from the camera, retrying if the frame is incomplete."""
+        for attempt in range(max_retries):
+            ret, frame_raw = self.cap.read()
+            if not ret or frame_raw is None:
+                time.sleep(retry_delay)
+                continue
+
+            frame_data = frame_raw.view(np.uint16).ravel()
+            expected_size = self.height * self.width
+            if frame_data.size < expected_size:
+                # Incomplete frame, wait and retry
+                print(
+                    f"[warn] Incomplete frame (got {frame_data.size}, expected {expected_size}), retrying {attempt+1}/{max_retries}"
+                )
+                time.sleep(retry_delay)
+                continue
+
+            try:
+                frame_visible = frame_data[: self.fourLinePara].copy().reshape(
+                    self.height, self.width
+                )
+                break
+            except ValueError:
+                print(
+                    f"[warn] Reshape failed (array size {frame_data.size}), retrying {attempt+1}/{max_retries}"
+                )
+                time.sleep(retry_delay)
+                continue
+        else:
+            # If we exit the loop without success
+            raise RuntimeError("Failed to read a complete frame from camera")
+
         self.frame_raw_u16: np.ndarray = frame_raw.view(np.uint16).ravel()
-        frame_visible = (
-            self.frame_raw_u16[: self.fourLinePara]
-            .copy()
-            .reshape(self.height, self.width)
-        )
+
         if raw:
             return ret, frame_visible
         if self.reference_frame is not None:
