@@ -1,4 +1,11 @@
 # IRPyThermal
+
+## Instal
+
+```
+poetry install
+```
+
 ### Thermal camera python library
 
 Supported thermal cameras:
