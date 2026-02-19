@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory=$false, HelpMessage="Resulted folder")]
     [Alias("f")]
     [string]$folder,
-    [Parameter(Mandatory=$false, HelpMessage="Sleep between photo")]
+    [Parameter(Mandatory=$false, HelpMessage="Sleep between photo, ms")]
     [Alias("d")]
     [int]$sleep_ms = 10
 )
